@@ -29,6 +29,11 @@ const TREE_SIZE = 170;
 const HOUSE_FRONT_ANCHOR = { left: '23%', top: '68%' };
 // 마스코트가 돌아다닐 수 있는 범위 = 중앙 잔디만(무대 기준 %). 양옆 꽃밭·집 쪽은 제외.
 const MEADOW_BOUNDS = { xMin: 36, xMax: 82, yMin: 58, yMax: 84 };
+// 집 클릭 판정 영역(무대 기준 %) — 배경 이미지 속 집 실루엣과 대략 맞춘 값.
+const HOUSE_BOUNDS = { xMin: 3, xMax: 34, yMin: 2, yMax: 62 };
+// 이동 시 한 hop당 이동하는 고정 거리(px). 목적지까지 거리를 이 값으로 나눠 스텝 수를 정하고,
+// 마지막 스텝만 남은 거리 전부를 이동해 정확히 목적지에 닿는다.
+const HOP_STEP_DISTANCE = 60;
 
 type Point = { x: number; y: number };
 type Footprint = Point & { id: number };
@@ -69,6 +74,11 @@ function clampPctToMeadow(pct: Point): Point {
 
 function clampOffsetToMeadow(offset: Point, rect: { width: number; height: number }): Point {
   return pctToOffset(clampPctToMeadow(offsetToPct(offset, rect)), rect);
+}
+function isInHouse(pct: Point) {
+  return (
+    pct.x >= HOUSE_BOUNDS.xMin && pct.x <= HOUSE_BOUNDS.xMax && pct.y >= HOUSE_BOUNDS.yMin && pct.y <= HOUSE_BOUNDS.yMax
+  );
 }
 
 type QuestKey = 'sticker' | 'note' | 'harvest';
@@ -137,9 +147,6 @@ export function GardenHome() {
   const coop = useCoopTree();
   const [fruitToast, setFruitToast] = useState<{ id: number; text: string } | null>(null);
 
-  // 데모용: 지금은 로그인 role을 GardenHome까지 안 내려주고 있어서, 여기서 로컬로
-  // "내 역할"을 토글해서 부모/자녀 화면을 각각 시연할 수 있게 해둔다.
-  const [myRole, setMyRole] = useState<'gardener' | 'viewer'>('gardener');
   const [moveMode, setMoveMode] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
 
@@ -195,15 +202,19 @@ export function GardenHome() {
       return;
     }
 
-    if (moveMode && myRole === 'gardener') {
+    if (moveMode) {
       const rect = e.currentTarget.getBoundingClientRect();
       const rawPct = {
         x: ((e.clientX - rect.left) / rect.width) * 100,
         y: ((e.clientY - rect.top) / rect.height) * 100,
       };
-      const target = pctToOffset(clampPctToMeadow(rawPct), rect);
       setMoveMode(false);
-      moveMascotTo(target);
+      if (isInHouse(rawPct)) {
+        showNudge('집으로 들어갈까요? 🏠');
+        moveMascotTo({ x: 0, y: 0 });
+      } else {
+        moveMascotTo(pctToOffset(clampPctToMeadow(rawPct), rect));
+      }
     }
   }
 
@@ -283,17 +294,23 @@ export function GardenHome() {
   async function moveMascotTo(target: Point) {
     if (isWalking || drop) return;
     setIsWalking(true);
-    showNudge('엄마를 이 자리로 옮겼어요 🚶');
 
     const start = mascotPos;
-    const STEPS = 3;
+    const dx = target.x - start.x;
+    const dy = target.y - start.y;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(dist / HOP_STEP_DISTANCE));
+
     let pos = start;
-    for (let i = 0; i < STEPS; i++) {
+    for (let i = 0; i < steps; i++) {
       setHopping(true);
       await wait(400);
       addFootprint(pos);
-      const t = (i + 1) / STEPS;
-      pos = { x: start.x + (target.x - start.x) * t, y: start.y + (target.y - start.y) * t };
+      const isLast = i === steps - 1;
+      // 마지막 스텝은 고정 보폭이 아니라 남은 거리 전부를 이동해 정확히 목적지에 닿는다.
+      pos = isLast
+        ? target
+        : { x: start.x + (dx * ((i + 1) * HOP_STEP_DISTANCE)) / dist, y: start.y + (dy * ((i + 1) * HOP_STEP_DISTANCE)) / dist };
       setMascotPos(pos);
       setHopping(false);
       await wait(80);
@@ -302,7 +319,7 @@ export function GardenHome() {
   }
 
   function armMoveMode() {
-    if (myRole !== 'gardener' || isWalking) return;
+    if (isWalking) return;
     setShowPlantTray(false);
     setArmedPlant(null);
     setMoveMode(true);
@@ -404,17 +421,6 @@ export function GardenHome() {
           >
             ⚡ 데모모드(물방울 {demoMode ? '8초' : '8시간'}) · {demoMode ? 'ON' : 'OFF'}
           </button>
-          {/* 데모용: 실제로는 카카오 로그인 시 역할이 정해지지만, 지금은 로컬에서 부모/자녀
-              화면을 둘 다 시연할 수 있도록 토글로 대신한다. */}
-          <button
-            onClick={() => {
-              setMoveMode(false);
-              setMyRole((r) => (r === 'gardener' ? 'viewer' : 'gardener'));
-            }}
-            className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
-          >
-            👤 내 역할: {myRole === 'gardener' ? '부모' : '자녀'}
-          </button>
         </div>
 
         {/* TODO: 실서비스는 실제 활동 파이프라인 + 하루 스크러버로 대체(섹션 0, 3). 지금은 데모용 수동 트리거. */}
@@ -456,7 +462,7 @@ export function GardenHome() {
           </div>
         )}
 
-        {activeTab === 'garden' && myRole === 'gardener' && !moveMode && !armedPlant && (
+        {activeTab === 'garden' && !moveMode && !armedPlant && (
           <p className="text-[10px] text-ink/40">마스코트를 탭하면 원하는 자리로 이동시킬 수 있어요</p>
         )}
 
@@ -561,7 +567,7 @@ export function GardenHome() {
                     top: HOUSE_FRONT_ANCHOR.top,
                     marginLeft: -55,
                     marginTop: -64,
-                    cursor: myRole === 'gardener' && !isWalking ? 'pointer' : undefined,
+                    cursor: !isWalking ? 'pointer' : undefined,
                   }}
                   animate={{
                     x: mascotPos.x,
