@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Mascot } from './Mascot';
 import { supabase } from '../lib/supabase';
+import { shareInviteCode } from '../lib/kakao';
 
 type Step = 'loading' | 'login' | 'role' | 'method' | 'create' | 'enter' | 'success';
 type Role = 'gardener' | 'viewer';
@@ -28,6 +29,9 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
   const [busy, setBusy] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // 카카오톡 공유 링크(?code=123456)로 들어온 경우, 로그인/역할 선택 후 이 코드로 바로 연결을 시도한다.
+  const [inviteCode] = useState(() => new URLSearchParams(window.location.search).get('code') ?? '');
+
   // 세션이 생기면(카카오 로그인 완료) 프로필을 확인해서 역할 선택을 건너뛸지 판단한다.
   useEffect(() => {
     if (!session) {
@@ -44,7 +48,11 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
       if (cancelled) return;
       if (data?.role) {
         setRole(data.role as Role);
-        setStep('method');
+        if (inviteCode) {
+          attemptJoin(inviteCode, data.role as Role);
+        } else {
+          setStep('method');
+        }
       } else {
         setStep('role');
       }
@@ -52,6 +60,7 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // 코드 만들기 화면에서는 상대방이 입력해서 status가 linked로 바뀌는 걸 실시간으로 기다린다.
@@ -102,7 +111,11 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
       return;
     }
     setRole(r);
-    setStep('method');
+    if (inviteCode) {
+      attemptJoin(inviteCode, r);
+    } else {
+      setStep('method');
+    }
   }
 
   async function startCreate() {
@@ -136,11 +149,13 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
     if (v && index < 5) inputRefs.current[index + 1]?.focus();
   }
 
-  async function joinWithCode() {
-    if (!session || !role) return;
+  async function attemptJoin(codeStr: string, r: Role) {
+    if (!session) return;
+    setStep('enter');
+    setDigits(codeStr.split('').slice(0, 6));
     setBusy(true);
     setError(null);
-    const codeStr = digits.join('');
+
     const { data, error: selectError } = await supabase
       .from('pairings')
       .select('id, viewer_id, gardener_id')
@@ -154,7 +169,7 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
       return;
     }
 
-    const targetField = role === 'gardener' ? 'gardener_id' : 'viewer_id';
+    const targetField = r === 'gardener' ? 'gardener_id' : 'viewer_id';
     if (data[targetField]) {
       setBusy(false);
       setError('이미 같은 역할로 연결된 코드예요. 상대방과 반대 역할로 시도해주세요.');
@@ -173,6 +188,20 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
       return;
     }
     setStep('success');
+  }
+
+  function joinWithCode() {
+    if (!role) return;
+    attemptJoin(digits.join(''), role);
+  }
+
+  async function shareCode() {
+    setError(null);
+    try {
+      await shareInviteCode(myCode);
+    } catch {
+      setError('카카오톡 공유를 열지 못했어요. 코드를 직접 알려주셔도 돼요.');
+    }
   }
 
   const enteredComplete = digits.every((d) => d !== '');
@@ -271,6 +300,13 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
               </motion.span>
               상대방이 코드를 입력하길 기다리는 중이에요
             </div>
+            <button
+              onClick={shareCode}
+              className="flex items-center gap-2 rounded-2xl bg-[#FEE500] px-5 py-2.5 text-sm font-semibold text-[#3C1E1E] shadow-[0_6px_16px_rgba(120,110,180,0.15)]"
+            >
+              💬 카카오톡으로 코드 보내기
+            </button>
+            {error && <p className="text-xs text-cheek-pink">{error}</p>}
             <button onClick={() => setStep('method')} className="text-xs text-ink/40">
               ← 뒤로
             </button>
