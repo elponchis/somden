@@ -59,13 +59,24 @@ export function hslToHex(h: number, s: number, l: number): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-// 사용자가 고른 몸 색 하나로 gradient 3톤(hi/mid/lo) + 발 색을 상대 밝기로 파생시킨다 (섹션 1).
-export function deriveMascotShades(baseHex: string) {
+// 색 하나로 gradient 3톤(hi/mid/lo)을 상대 밝기로 파생시킨다 (섹션 1).
+// 마스코트뿐 아니라 정원의 모든 코드 오브젝트(나무·연못·아이템)가 공유하는 규칙.
+export function deriveShades(baseHex: string) {
   const [h, s, l] = hexToHsl(baseHex);
   return {
-    bodyHi: hslToHex(h, s, Math.min(0.92, l + 0.16)),
-    bodyMid: baseHex,
-    bodyLo: hslToHex(h, s, Math.max(0.15, l - 0.14)),
+    hi: hslToHex(h, s, Math.min(0.92, l + 0.16)),
+    mid: baseHex,
+    lo: hslToHex(h, s, Math.max(0.15, l - 0.14)),
+  };
+}
+
+export function deriveMascotShades(baseHex: string) {
+  const [h, s, l] = hexToHsl(baseHex);
+  const { hi, mid, lo } = deriveShades(baseHex);
+  return {
+    bodyHi: hi,
+    bodyMid: mid,
+    bodyLo: lo,
     footColor: hslToHex(h, Math.min(1, s + 0.05), Math.max(0.12, l - 0.26)),
   };
 }
