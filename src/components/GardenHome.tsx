@@ -16,8 +16,8 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]['key'];
 
-// TODO: public/bg-*.jpg 준비되면 교체 (섹션 9 프롬프트 참고, 창문은 꺼진 채로).
-const WINDOW_POSITION = { left: '17%', top: '40%' };
+// bg-day.jpg 기준 창문 좌표 (문 오른쪽 창). 아침/밤/비 변주 이미지도 같은 구도라 좌표 재사용 가능.
+const WINDOW_POSITION = { left: '27.5%', top: '37%' };
 // 마스코트/발자국/아이템이 공유하는 무대 기준점 (main 기준 %)
 const STAGE_ANCHOR = { left: '50%', top: '74%' };
 
