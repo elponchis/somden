@@ -6,16 +6,21 @@ import { GroundShadow, PencilFilter } from '../lib/gardenArt';
 const MAX = 100;
 const STAGE_LABELS = ['씨앗', '새싹', '줄기', '나무', '열매'];
 
+// 물주기(자녀 기여)/부모 활동 재생(부모 기여) 1회당 게이지 증가량. 대충 잡은 값 — 나중에 밸런싱.
+const WATER_GAIN = 25;
+const PARENT_REPLAY_GAIN = 25;
+
 export function treeStageLabel(stage: number) {
   return STAGE_LABELS[Math.min(stage, STAGE_LABELS.length - 1)];
 }
 
-// TODO: 실서비스에서는 coop_tree 테이블 realtime 구독으로 대체(섹션 7). 지금은 데모용 로컬 상태 + 수동 기여 버튼.
+// TODO: 실서비스에서는 coop_tree 테이블 realtime 구독으로 대체(섹션 7). 지금은 데모용 로컬 상태.
 export function useCoopTree() {
   const [parentProgress, setParentProgress] = useState(30);
   const [childProgress, setChildProgress] = useState(15);
   const [stage, setStage] = useState(0);
   const [justGrew, setJustGrew] = useState(false);
+  const [harvestedFruit, setHarvestedFruit] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     if (parentProgress >= MAX && childProgress >= MAX) {
@@ -24,6 +29,7 @@ export function useCoopTree() {
         setStage((s) => s + 1);
         setParentProgress(0);
         setChildProgress(0);
+        setHarvestedFruit(new Set());
       }, 500);
       const flagTimer = setTimeout(() => setJustGrew(false), 1100);
       return () => {
@@ -33,14 +39,22 @@ export function useCoopTree() {
     }
   }, [parentProgress, childProgress]);
 
-  return {
-    parentProgress,
-    childProgress,
-    stage,
-    justGrew,
-    contributeParent: () => setParentProgress((p) => Math.min(MAX, p + 20)),
-    contributeChild: () => setChildProgress((c) => Math.min(MAX, c + 20)),
-  };
+  function water() {
+    setChildProgress((c) => Math.min(MAX, c + WATER_GAIN));
+  }
+
+  function replayParent() {
+    setParentProgress((p) => Math.min(MAX, p + PARENT_REPLAY_GAIN));
+  }
+
+  // 이미 수확한 열매면 false, 새로 수확했으면 true를 반환 — 호출부에서 true일 때만 씨앗을 준다.
+  function harvestFruit(index: number) {
+    if (harvestedFruit.has(index)) return false;
+    setHarvestedFruit((prev) => new Set(prev).add(index));
+    return true;
+  }
+
+  return { parentProgress, childProgress, stage, justGrew, harvestedFruit, water, replayParent, harvestFruit };
 }
 
 // 마스코트 몸통 기본 그라디언트와 동일한 3톤 — "나무를 크게 늘린 마스코트"로 보이게 팔레트를 맞춘다.
@@ -66,7 +80,20 @@ const CANOPY_BLOB =
 
 // 0=씨앗 1=새싹 2=줄기 3=나무 4+=열매. 무대에 크게 그려지는 성장 비주얼.
 // 마스코트와 같은 규칙(gradient 3톤 + 연필 질감 필터 + 접지 그림자)을 따른다.
-export function TreeVisual({ stage, justGrew, size = 200 }: { stage: number; justGrew: boolean; size?: number }) {
+// harvestedFruit/onHarvestFruit을 넘기면 열매를 탭해서 개별 수확할 수 있다(안 넘기면 장식용).
+export function TreeVisual({
+  stage,
+  justGrew,
+  size = 200,
+  harvestedFruit,
+  onHarvestFruit,
+}: {
+  stage: number;
+  justGrew: boolean;
+  size?: number;
+  harvestedFruit?: Set<number>;
+  onHarvestFruit?: (index: number) => void;
+}) {
   const fruitCount = Math.min(Math.max(stage - 3, 0), FRUIT_SPOTS.length);
 
   return (
@@ -135,9 +162,30 @@ export function TreeVisual({ stage, justGrew, size = 200 }: { stage: number; jus
               transition={{ duration: 0.6, ease: 'easeOut' }}
             >
               <path d={CANOPY_BLOB} fill="url(#treeCanopy)" />
-              {FRUIT_SPOTS.slice(0, fruitCount).map(([fx, fy], i) => (
-                <circle key={i} cx={fx} cy={fy} r="4.2" fill={FRUIT_COLOR} />
-              ))}
+              {FRUIT_SPOTS.slice(0, fruitCount).map(([fx, fy], i) => {
+                if (harvestedFruit?.has(i)) return null;
+                const interactive = Boolean(onHarvestFruit);
+                return (
+                  <motion.circle
+                    key={i}
+                    cx={fx}
+                    cy={fy}
+                    r="4.2"
+                    fill={FRUIT_COLOR}
+                    style={{ cursor: interactive ? 'pointer' : undefined }}
+                    onClick={
+                      interactive
+                        ? (e) => {
+                            e.stopPropagation();
+                            onHarvestFruit?.(i);
+                          }
+                        : undefined
+                    }
+                    animate={interactive ? { scale: [1, 1.2, 1] } : undefined}
+                    transition={interactive ? { duration: 1.1, repeat: Infinity, ease: 'easeInOut' } : undefined}
+                  />
+                );
+              })}
             </motion.g>
           </g>
         )}
@@ -177,40 +225,39 @@ export function TreeGauges({
   parentProgress,
   childProgress,
   stage,
-  onContributeParent,
-  onContributeChild,
+  dropletsAvailable,
+  onWater,
+  onReplayParent,
 }: {
   parentProgress: number;
   childProgress: number;
   stage: number;
-  onContributeParent: () => void;
-  onContributeChild: () => void;
+  dropletsAvailable: boolean;
+  onWater: () => void;
+  onReplayParent: () => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-sm items-center gap-3 rounded-3xl bg-cream/85 px-4 py-3 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
-      <div className="flex-1">
-        <span className="mb-1.5 block text-xs font-semibold text-ink">
-          함께 키우는 나무 · {treeStageLabel(stage)} ({stage + 1}단계)
-        </span>
-        <div className="space-y-1.5">
-          <GaugeBar emoji="🌿" label="엄마" color="bg-garden-green" value={parentProgress} />
-          <GaugeBar emoji="💜" label="나" color="bg-soft-purple" value={childProgress} />
-        </div>
+    <div className="mx-auto flex w-full max-w-sm flex-col gap-3 rounded-3xl bg-cream/85 px-4 py-3 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
+      <span className="text-xs font-semibold text-ink">
+        함께 키우는 나무 · {treeStageLabel(stage)} ({stage + 1}단계)
+      </span>
+      <div className="space-y-1.5">
+        <GaugeBar emoji="🌿" label="엄마" color="bg-garden-green" value={parentProgress} />
+        <GaugeBar emoji="💜" label="나" color="bg-soft-purple" value={childProgress} />
       </div>
-
-      {/* TODO: 데모용 수동 기여 버튼. 실서비스에서는 활동 신호/돌봄 행동에서 자동 반영. */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex gap-2">
         <button
-          onClick={onContributeParent}
-          className="rounded-full bg-garden-green/15 px-2 py-1 text-[11px] font-semibold text-garden-green"
+          onClick={onWater}
+          disabled={!dropletsAvailable}
+          className="flex-1 rounded-2xl bg-garden-green px-3 py-2 text-xs font-semibold text-cream shadow-[0_4px_12px_rgba(120,110,180,0.12)] disabled:bg-cream-deep disabled:text-ink/30 disabled:shadow-none"
         >
-          +🌿
+          💧 물주기
         </button>
         <button
-          onClick={onContributeChild}
-          className="rounded-full bg-soft-purple/20 px-2 py-1 text-[11px] font-semibold text-purple-ink"
+          onClick={onReplayParent}
+          className="flex-1 rounded-2xl bg-soft-purple/70 px-3 py-2 text-xs font-semibold text-purple-ink shadow-[0_4px_12px_rgba(120,110,180,0.12)]"
         >
-          +💜
+          🌿 부모 활동 재생
         </button>
       </div>
     </div>

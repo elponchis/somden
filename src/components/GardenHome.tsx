@@ -5,7 +5,9 @@ import { TreeVisual, TreeGauges, useCoopTree } from './CoopTree';
 import { PondVisual } from './GardenItems';
 import { Customize } from './Customize';
 import { NoteBoard } from './NoteBoard';
+import { CooldownRing, DropletIcon, SeedIcon } from './ResourceIcons';
 import { deriveMascotShades } from '../lib/color';
+import { DEMO_COOLDOWN_MS, DROPLET_CAP, REAL_COOLDOWN_MS, formatCooldown, useDroplets } from '../hooks/useDroplets';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -20,7 +22,7 @@ type TabKey = (typeof TABS)[number]['key'];
 
 // bg-day.jpg 기준 창문 좌표 (문 오른쪽 창). 아침/밤/비 변주 이미지도 같은 구도라 좌표 재사용 가능.
 const WINDOW_POSITION = { left: '27.5%', top: '37%' };
-// 함께 키우는 나무 = 무대 중앙, 접지선 기준점 (기존 80%에서 조금 더 화면 중앙 쪽으로)
+// 함께 키우는 나무 = 무대 중앙, 접지선 기준점
 const TREE_ANCHOR = { left: '50%', top: '73%' };
 const TREE_SIZE = 170;
 // 마스코트의 기본 위치 = 집 앞. 산책 신호를 받으면 집에서 멀어지는 방향(오른쪽)으로 짧게 걷는다.
@@ -38,12 +40,15 @@ const WALK_STEPS: Point[] = [
 ];
 
 type QuestKey = 'sticker' | 'note' | 'harvest';
-const QUEST_DEFS: { key: QuestKey; label: string; icon: string }[] = [
-  { key: 'sticker', label: '쪽지에 스티커 붙이기', icon: '🎀' },
-  { key: 'note', label: '손글씨 쪽지 보내기', icon: '✏️' },
-  { key: 'harvest', label: '오늘 자란 열매 수확하기', icon: '🌰' },
+// 퀘스트 완료 보상은 씨앗이 아니라 물방울(나무 성장 재료)로 바뀌었다.
+const QUEST_DEFS: { key: QuestKey; label: string; icon: string; reward: number }[] = [
+  { key: 'sticker', label: '쪽지에 스티커 붙이기', icon: '🎀', reward: 1 },
+  { key: 'note', label: '손글씨 쪽지 보내기', icon: '✏️', reward: 2 },
+  { key: 'harvest', label: '오늘 주운 도토리 수확하기', icon: '🌰', reward: 3 },
 ];
-const QUEST_REWARD = 2;
+
+// 나무 열매 하나를 수확할 때 얻는 씨앗 — 대충 잡은 값, 나중에 밸런싱.
+const FRUIT_SEED_REWARD = 5;
 
 type PlantShopEntry = { id: string; emoji?: string; label: string; cost: number; kind: 'flower' | 'pond' };
 const PLANT_SHOP: PlantShopEntry[] = [
@@ -83,7 +88,8 @@ const BG_IMAGE: Record<TimeOfDay, string> = {
 export function GardenHome() {
   const [activeTab, setActiveTab] = useState<TabKey>('garden');
   const [windowLit, setWindowLit] = useState(false);
-  const [seeds, setSeeds] = useState(0);
+  // 데모 편의상 씨앗은 100개로 시작 — 상점에서 산 아이템이 바로 보이도록.
+  const [seeds, setSeeds] = useState(100);
   const [mascotBaseColor, setMascotBaseColor] = useState('#8FAE74');
 
   const [equippedHat, setEquippedHat] = useState<HatStyle>('none');
@@ -91,7 +97,13 @@ export function GardenHome() {
   const [equippedGlasses, setEquippedGlasses] = useState<GlassesStyle>('none');
   const [ownedGlasses, setOwnedGlasses] = useState<Set<GlassesStyle>>(() => new Set(['none']));
 
+  // 8시간 쿨다운을 발표 데모에서는 8초로 압축해서 보여주기 위한 토글.
+  const [demoMode, setDemoMode] = useState(true);
+  const cooldownMs = demoMode ? DEMO_COOLDOWN_MS : REAL_COOLDOWN_MS;
+  const droplets = useDroplets(cooldownMs);
+
   const coop = useCoopTree();
+  const [fruitToast, setFruitToast] = useState<{ id: number; text: string } | null>(null);
 
   const [isWalking, setIsWalking] = useState(false);
   const [hopping, setHopping] = useState(false);
@@ -119,15 +131,15 @@ export function GardenHome() {
   function completeQuest(kind: QuestKey) {
     if (questsDone[kind]) return;
     setQuestsDone((prev) => ({ ...prev, [kind]: true }));
-    setSeeds((s) => s + QUEST_REWARD);
-    const def = QUEST_DEFS.find((q) => q.key === kind);
-    showNudge(`${def?.icon} 오늘의 퀘스트 완료! 🌰 +${QUEST_REWARD}`);
+    const def = QUEST_DEFS.find((q) => q.key === kind)!;
+    droplets.addDroplets(def.reward);
+    showNudge(`${def.icon} 오늘의 퀘스트 완료! 💧 +${def.reward}`);
   }
 
   function handleStageClick(e: ReactMouseEvent<HTMLElement>) {
     if (!armedPlant) return;
     if (seeds < armedPlant.cost) {
-      showNudge('씨앗이 부족해요 🌰');
+      showNudge('씨앗이 부족해요 🌱');
       setArmedPlant(null);
       return;
     }
@@ -150,7 +162,7 @@ export function GardenHome() {
       return;
     }
     if (seeds < cost) {
-      showNudge('씨앗이 부족해요 🌰');
+      showNudge('씨앗이 부족해요 🌱');
       return;
     }
     setSeeds((s) => s - cost);
@@ -165,7 +177,7 @@ export function GardenHome() {
       return;
     }
     if (seeds < cost) {
-      showNudge('씨앗이 부족해요 🌰');
+      showNudge('씨앗이 부족해요 🌱');
       return;
     }
     setSeeds((s) => s - cost);
@@ -213,11 +225,19 @@ export function GardenHome() {
 
   function harvestDrop() {
     if (!drop) return;
-    setSeeds((s) => s + 1);
-    addToast(drop, '🌰 +1');
+    droplets.addDroplets(1);
+    addToast(drop, '💧 +1');
     setDrop(null);
     setMascotPos({ x: 0, y: 0 });
     completeQuest('harvest');
+  }
+
+  function handleHarvestFruit(index: number) {
+    const got = coop.harvestFruit(index);
+    if (!got) return;
+    setSeeds((s) => s + FRUIT_SEED_REWARD);
+    setFruitToast({ id: Date.now() + Math.random(), text: `🌱 +${FRUIT_SEED_REWARD}` });
+    setTimeout(() => setFruitToast(null), 900);
   }
 
   function triggerWake() {
@@ -254,18 +274,37 @@ export function GardenHome() {
         />
       </div>
 
-      {/* 상단 = 정보 + 씨앗 자원 + (데모용) 활동 신호 트리거 */}
+      {/* 상단 = 정보 + 자원 바(물방울/씨앗) + (데모용) 트리거 */}
       <header className="relative z-20 flex flex-col items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top)+12px)]">
-        <div className="flex items-center gap-3 rounded-full bg-cream/80 px-5 py-2.5 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
+        <div className="flex items-center gap-2.5 rounded-full bg-cream/80 px-5 py-2.5 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
           <span className="text-lg leading-none">🏡</span>
           <div className="flex flex-col leading-tight">
             <span className="text-sm font-semibold text-ink">엄마의 정원</span>
             <span className="text-xs text-ink/60">오늘도 평온해요 · 오전 9:12</span>
           </div>
           <div className="ml-1 flex items-center gap-1 rounded-full bg-cream-deep px-2.5 py-1 text-xs font-semibold text-ink">
-            🌰 {seeds}
+            <DropletIcon size={15} />
+            {droplets.droplets}
+            {droplets.droplets < DROPLET_CAP && (
+              <span className="ml-0.5 flex items-center gap-0.5 text-[10px] font-normal text-ink/50">
+                <CooldownRing size={14} progress={droplets.progress} />
+                {formatCooldown(droplets.remainingMs)}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 rounded-full bg-cream-deep px-2.5 py-1 text-xs font-semibold text-ink">
+            <SeedIcon size={15} />
+            {seeds}
           </div>
         </div>
+
+        {/* 개발용 데모 모드 토글: 물방울 충전 주기를 8시간 ↔ 8초로 전환 */}
+        <button
+          onClick={() => setDemoMode((v) => !v)}
+          className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
+        >
+          ⚡ 데모모드(물방울 {demoMode ? '8초' : '8시간'}) · {demoMode ? 'ON' : 'OFF'}
+        </button>
 
         {/* TODO: 실서비스는 실제 활동 파이프라인 + 하루 스크러버로 대체(섹션 0, 3). 지금은 데모용 수동 트리거. */}
         {activeTab === 'garden' && (
@@ -335,7 +374,9 @@ export function GardenHome() {
         </AnimatePresence>
       </header>
 
-      {/* 중앙 = 탭별 컨텐츠 */}
+      {/* 중앙 = 탭별 컨텐츠. 무대 높이가 하단 오버레이(식물 상점) 유무로 흔들리지 않도록
+          그 오버레이는 main의 자식으로 absolute 배치한다(형제 블록으로 두면 main 높이가
+          바뀌면서 나무·마스코트가 붕 뜨는 것처럼 보였음). */}
       <main
         className="relative flex-1"
         onClick={handleStageClick}
@@ -370,7 +411,7 @@ export function GardenHome() {
               ),
             )}
 
-            {/* 함께 키우는 나무 — 무대 정중앙, 씨앗~열매 성장 비주얼 */}
+            {/* 함께 키우는 나무 — 무대 정중앙에 고정, 심기 중에도 위치가 흔들리지 않는다 */}
             <div
               className="absolute"
               style={{
@@ -380,39 +421,41 @@ export function GardenHome() {
                 marginTop: -(TREE_SIZE * 1.25 * 0.92),
               }}
             >
-              <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={TREE_SIZE} />
+              <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={TREE_SIZE} harvestedFruit={coop.harvestedFruit} />
             </div>
 
-            {/* 마스코트 접지 그림자 — 기본 위치는 집 앞 */}
-            <div
-              className="absolute h-6 w-32 rounded-[50%]"
-              style={{
-                left: HOUSE_FRONT_ANCHOR.left,
-                top: HOUSE_FRONT_ANCHOR.top,
-                marginLeft: -64,
-                marginTop: 50,
-                background: 'radial-gradient(ellipse, rgba(94,125,82,0.35) 0%, rgba(94,125,82,0) 72%)',
-              }}
-            />
-
-            {/* 마스코트 — 집 앞이 기본 위치, 산책 신호를 받으면 집에서 멀어지는 쪽(오른쪽)으로 짧게 hop */}
-            <motion.div
-              className="absolute"
-              style={{
-                left: HOUSE_FRONT_ANCHOR.left,
-                top: HOUSE_FRONT_ANCHOR.top,
-                marginLeft: -55,
-                marginTop: -64,
-              }}
-              animate={{ x: mascotPos.x, y: mascotPos.y }}
-              transition={{ type: 'spring', stiffness: 130, damping: 15 }}
-            >
-              <Mascot
-                size={110}
-                hopping={hopping}
-                config={{ ...deriveMascotShades(mascotBaseColor), hat: equippedHat, glasses: equippedGlasses }}
-              />
-            </motion.div>
+            {/* 마스코트 — 아이템을 심는 동안(armedPlant)은 배치에 방해되지 않도록 잠시 숨긴다 */}
+            {!armedPlant && (
+              <>
+                <div
+                  className="absolute h-6 w-32 rounded-[50%]"
+                  style={{
+                    left: HOUSE_FRONT_ANCHOR.left,
+                    top: HOUSE_FRONT_ANCHOR.top,
+                    marginLeft: -64,
+                    marginTop: 50,
+                    background: 'radial-gradient(ellipse, rgba(94,125,82,0.35) 0%, rgba(94,125,82,0) 72%)',
+                  }}
+                />
+                <motion.div
+                  className="absolute"
+                  style={{
+                    left: HOUSE_FRONT_ANCHOR.left,
+                    top: HOUSE_FRONT_ANCHOR.top,
+                    marginLeft: -55,
+                    marginTop: -64,
+                  }}
+                  animate={{ x: mascotPos.x, y: mascotPos.y }}
+                  transition={{ type: 'spring', stiffness: 130, damping: 15 }}
+                >
+                  <Mascot
+                    size={110}
+                    hopping={hopping}
+                    config={{ ...deriveMascotShades(mascotBaseColor), hat: equippedHat, glasses: equippedGlasses }}
+                  />
+                </motion.div>
+              </>
+            )}
 
             {/* 지나온 자리의 점선 발자국 (1.5초 페이드) */}
             {footprints.map((fp) => (
@@ -482,13 +525,43 @@ export function GardenHome() {
 
         {activeTab === 'tree' && (
           <div className="flex h-full flex-col items-center justify-center gap-6 px-6">
-            <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={220} />
+            <div className="relative">
+              <TreeVisual
+                stage={coop.stage}
+                justGrew={coop.justGrew}
+                size={220}
+                harvestedFruit={coop.harvestedFruit}
+                onHarvestFruit={handleHarvestFruit}
+              />
+              <AnimatePresence>
+                {fruitToast && (
+                  <motion.div
+                    key={fruitToast.id}
+                    initial={{ opacity: 1, y: 0 }}
+                    animate={{ opacity: 0, y: -30 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.9, ease: 'easeOut' }}
+                    className="absolute left-1/2 top-16 -translate-x-1/2 text-sm font-semibold text-purple-ink"
+                  >
+                    {fruitToast.text}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            {coop.stage >= 3 && (
+              <p className="-mt-3 text-[11px] text-ink/50">🌰 열매를 탭하면 씨앗을 수확할 수 있어요</p>
+            )}
             <TreeGauges
               parentProgress={coop.parentProgress}
               childProgress={coop.childProgress}
               stage={coop.stage}
-              onContributeParent={coop.contributeParent}
-              onContributeChild={coop.contributeChild}
+              dropletsAvailable={droplets.droplets > 0}
+              onWater={() => {
+                if (droplets.droplets <= 0) return;
+                droplets.spendDroplet();
+                coop.water();
+              }}
+              onReplayParent={coop.replayParent}
             />
           </div>
         )}
@@ -509,37 +582,45 @@ export function GardenHome() {
         {activeTab === 'note' && (
           <NoteBoard onSend={() => completeQuest('note')} onStickerPlaced={() => completeQuest('sticker')} />
         )}
-      </main>
 
-      {/* 식물 상점 (정원 탭에서 🌷 심기를 눌렀을 때만) */}
-      {activeTab === 'garden' && showPlantTray && (
-        <div className="relative z-20 px-4 pb-3">
-          <div className="mx-auto flex max-w-sm items-center justify-center gap-2.5 rounded-3xl bg-cream/85 px-4 py-3 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
-            {PLANT_SHOP.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setArmedPlant(p)}
-                disabled={seeds < p.cost}
-                className="flex flex-col items-center gap-0.5"
-                style={{
-                  opacity: seeds < p.cost ? 0.4 : 1,
-                }}
-              >
-                <span
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-xl"
-                  style={{ background: armedPlant?.id === p.id ? 'var(--color-soft-purple)' : 'transparent' }}
-                >
-                  {p.kind === 'pond' ? <PondVisual size={30} /> : p.emoji}
-                </span>
-                <span className="text-[10px] font-semibold text-garden-green">🌰{p.cost}</span>
-              </button>
-            ))}
+        {/* 식물 상점: main의 자식으로 absolute 배치 — 열고 닫아도 무대(main) 높이가
+            바뀌지 않아 나무·마스코트가 흔들리지 않는다. */}
+        {activeTab === 'garden' && showPlantTray && (
+          <div className="absolute inset-x-0 bottom-3 z-20 px-4" onClick={(e) => e.stopPropagation()}>
+            {!armedPlant ? (
+              <>
+                <div className="mx-auto flex max-w-sm items-center justify-center gap-2.5 rounded-3xl bg-cream/85 px-4 py-3 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
+                  {PLANT_SHOP.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => setArmedPlant(p)}
+                      disabled={seeds < p.cost}
+                      className="flex flex-col items-center gap-0.5"
+                      style={{ opacity: seeds < p.cost ? 0.4 : 1 }}
+                    >
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full text-xl">
+                        {p.kind === 'pond' ? <PondVisual size={30} /> : p.emoji}
+                      </span>
+                      <span className="text-[10px] font-semibold text-garden-green">🌱{p.cost}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-center text-[11px] text-ink/50">씨앗으로 심을 아이템을 골라주세요</p>
+              </>
+            ) : (
+              // 아이템을 고르면 트레이 자체를 잠시 치워서 배치 탭에 방해되지 않게 한다.
+              <div className="mx-auto flex max-w-sm flex-col items-center gap-1.5">
+                <p className="rounded-full bg-cream/85 px-4 py-2 text-xs font-medium text-ink/70 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
+                  정원을 탭해서 심어주세요
+                </p>
+                <button onClick={() => setArmedPlant(null)} className="text-[11px] text-ink/40 underline">
+                  취소
+                </button>
+              </div>
+            )}
           </div>
-          <p className="mt-1.5 text-center text-[11px] text-ink/50">
-            {armedPlant ? '정원을 탭해서 심어주세요' : '씨앗으로 심을 식물을 골라주세요'}
-          </p>
-        </div>
-      )}
+        )}
+      </main>
 
       {/* 오늘의 퀘스트 모달 */}
       <AnimatePresence>
@@ -572,7 +653,7 @@ export function GardenHome() {
                     >
                       {q.label}
                     </span>
-                    <span className="text-xs font-semibold text-garden-green">+{QUEST_REWARD}🌰</span>
+                    <span className="text-xs font-semibold text-garden-green">+{q.reward}💧</span>
                   </li>
                 ))}
               </ul>
