@@ -41,12 +41,12 @@ export function Mascot({
       viewBox="0 0 130 150"
       animate={
         hopping
-          ? { y: [0, -34, 0], scaleX: [1, 0.88, 1.12, 1], scaleY: [1, 1.14, 0.9, 1] }
+          ? { y: [0, -20, 0], scaleX: [1, 0.94, 1.05, 1], scaleY: [1, 1.06, 0.96, 1] }
           : { y: [0, -3, 0] }
       }
       transition={
         hopping
-          ? { duration: 0.6, ease: 'easeOut' }
+          ? { duration: 0.38, ease: 'easeOut' }
           : { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }
       }
       style={{ transformOrigin: '65px 130px' }}

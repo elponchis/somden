@@ -19,8 +19,9 @@ export function formatCooldown(ms: number) {
 // TODO: 실서비스에서는 Supabase에 마지막 충전 시각을 저장해 새로고침/재접속에도
 // 이어지게 해야 함. 지금은 로컬 state뿐이라 새로고침하면 초기화된다.
 export function useDroplets(cooldownMs: number) {
-  const [droplets, setDroplets] = useState(2);
-  const [nextRefillAt, setNextRefillAt] = useState<number | null>(() => Date.now() + cooldownMs);
+  // 데모 편의상 씨앗과 마찬가지로 100개로 시작 — 캡(DROPLET_CAP)은 이후 자동 충전에만 적용된다.
+  const [droplets, setDroplets] = useState(100);
+  const [nextRefillAt, setNextRefillAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -48,12 +49,21 @@ export function useDroplets(cooldownMs: number) {
     setDroplets((d) => Math.max(0, d - 1));
   }
 
+  // 캡은 "가만히 둬도 차오르는" 자동 충전에만 적용된다. 퀘스트 보상 등으로 얻는 물방울은
+  // 캡을 넘어도 그대로 더해진다(안 그러면 캡 이상 보유 중일 때 보상을 받고 오히려 줄어드는
+  // 버그가 생김).
   function addDroplets(n: number) {
-    setDroplets((d) => Math.min(DROPLET_CAP, d + n));
+    setDroplets((d) => d + n);
+  }
+
+  // 데모용 초기화 — 씨앗과 함께 눌러서 바로 다시 100개로.
+  function reset(n = 100) {
+    setDroplets(n);
+    setNextRefillAt(n < DROPLET_CAP ? Date.now() + cooldownMs : null);
   }
 
   const remainingMs = nextRefillAt ? Math.max(0, nextRefillAt - now) : 0;
   const progress = droplets >= DROPLET_CAP ? 1 : 1 - remainingMs / cooldownMs;
 
-  return { droplets, remainingMs, progress, spendDroplet, addDroplets };
+  return { droplets, remainingMs, progress, spendDroplet, addDroplets, reset };
 }

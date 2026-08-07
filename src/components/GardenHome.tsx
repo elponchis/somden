@@ -1,4 +1,4 @@
-import { useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Mascot, type GlassesStyle, type HatStyle } from './Mascot';
 import { TreeVisual, TreeGauges, useCoopTree } from './CoopTree';
@@ -27,6 +27,8 @@ const TREE_ANCHOR = { left: '50%', top: '73%' };
 const TREE_SIZE = 170;
 // 마스코트의 기본 위치 = 집 앞. 산책 신호를 받으면 집에서 멀어지는 방향(오른쪽)으로 짧게 걷는다.
 const HOUSE_FRONT_ANCHOR = { left: '23%', top: '68%' };
+// 마스코트가 돌아다닐 수 있는 범위 = 중앙 잔디만(무대 기준 %). 양옆 꽃밭·집 쪽은 제외.
+const MEADOW_BOUNDS = { xMin: 36, xMax: 82, yMin: 58, yMax: 84 };
 
 type Point = { x: number; y: number };
 type Footprint = Point & { id: number };
@@ -38,6 +40,36 @@ const WALK_STEPS: Point[] = [
   { x: 18, y: -6 },
   { x: 14, y: -4 },
 ];
+
+// mascotPos는 HOUSE_FRONT_ANCHOR로부터의 픽셀 오프셋. 탭 좌표(%)와 서로 변환해서
+// 이동 목적지를 계산하고, 중앙 잔디 범위로 클램프한다.
+function anchorPx(rect: { width: number; height: number }) {
+  return {
+    x: rect.width * (parseFloat(HOUSE_FRONT_ANCHOR.left) / 100),
+    y: rect.height * (parseFloat(HOUSE_FRONT_ANCHOR.top) / 100),
+  };
+}
+
+function offsetToPct(offset: Point, rect: { width: number; height: number }): Point {
+  const a = anchorPx(rect);
+  return { x: ((a.x + offset.x) / rect.width) * 100, y: ((a.y + offset.y) / rect.height) * 100 };
+}
+
+function pctToOffset(pct: Point, rect: { width: number; height: number }): Point {
+  const a = anchorPx(rect);
+  return { x: rect.width * (pct.x / 100) - a.x, y: rect.height * (pct.y / 100) - a.y };
+}
+
+function clampPctToMeadow(pct: Point): Point {
+  return {
+    x: Math.min(MEADOW_BOUNDS.xMax, Math.max(MEADOW_BOUNDS.xMin, pct.x)),
+    y: Math.min(MEADOW_BOUNDS.yMax, Math.max(MEADOW_BOUNDS.yMin, pct.y)),
+  };
+}
+
+function clampOffsetToMeadow(offset: Point, rect: { width: number; height: number }): Point {
+  return pctToOffset(clampPctToMeadow(offsetToPct(offset, rect)), rect);
+}
 
 type QuestKey = 'sticker' | 'note' | 'harvest';
 // 퀘스트 완료 보상은 씨앗이 아니라 물방울(나무 성장 재료)로 바뀌었다.
@@ -105,6 +137,12 @@ export function GardenHome() {
   const coop = useCoopTree();
   const [fruitToast, setFruitToast] = useState<{ id: number; text: string } | null>(null);
 
+  // 데모용: 지금은 로그인 role을 GardenHome까지 안 내려주고 있어서, 여기서 로컬로
+  // "내 역할"을 토글해서 부모/자녀 화면을 각각 시연할 수 있게 해둔다.
+  const [myRole, setMyRole] = useState<'gardener' | 'viewer'>('gardener');
+  const [moveMode, setMoveMode] = useState(false);
+  const mainRef = useRef<HTMLElement>(null);
+
   const [isWalking, setIsWalking] = useState(false);
   const [hopping, setHopping] = useState(false);
   const [mascotPos, setMascotPos] = useState<Point>({ x: 0, y: 0 });
@@ -137,23 +175,36 @@ export function GardenHome() {
   }
 
   function handleStageClick(e: ReactMouseEvent<HTMLElement>) {
-    if (!armedPlant) return;
-    if (seeds < armedPlant.cost) {
-      showNudge('씨앗이 부족해요 🌱');
+    if (armedPlant) {
+      if (seeds < armedPlant.cost) {
+        showNudge('씨앗이 부족해요 🌱');
+        setArmedPlant(null);
+        return;
+      }
+      const rect = e.currentTarget.getBoundingClientRect();
+      const xPct = Math.min(90, Math.max(10, ((e.clientX - rect.left) / rect.width) * 100));
+      const yPct = Math.min(90, Math.max(15, ((e.clientY - rect.top) / rect.height) * 100));
+      setPlantings((list) => [
+        ...list,
+        { id: Date.now() + Math.random(), shopId: armedPlant.id, kind: armedPlant.kind, emoji: armedPlant.emoji, xPct, yPct },
+      ]);
+      setSeeds((s) => s - armedPlant.cost);
+      showNudge(armedPlant.kind === 'pond' ? '연못을 만들었어요!' : `${armedPlant.emoji} 심었어요!`);
       setArmedPlant(null);
+      setShowPlantTray(false);
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    const xPct = Math.min(90, Math.max(10, ((e.clientX - rect.left) / rect.width) * 100));
-    const yPct = Math.min(90, Math.max(15, ((e.clientY - rect.top) / rect.height) * 100));
-    setPlantings((list) => [
-      ...list,
-      { id: Date.now() + Math.random(), shopId: armedPlant.id, kind: armedPlant.kind, emoji: armedPlant.emoji, xPct, yPct },
-    ]);
-    setSeeds((s) => s - armedPlant.cost);
-    showNudge(armedPlant.kind === 'pond' ? '연못을 만들었어요!' : `${armedPlant.emoji} 심었어요!`);
-    setArmedPlant(null);
-    setShowPlantTray(false);
+
+    if (moveMode && myRole === 'gardener') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const rawPct = {
+        x: ((e.clientX - rect.left) / rect.width) * 100,
+        y: ((e.clientY - rect.top) / rect.height) * 100,
+      };
+      const target = pctToOffset(clampPctToMeadow(rawPct), rect);
+      setMoveMode(false);
+      moveMascotTo(target);
+    }
   }
 
   function toggleHat(id: HatStyle, cost: number) {
@@ -204,23 +255,58 @@ export function GardenHome() {
   }
 
   async function triggerWalk() {
-    if (isWalking || drop) return;
+    if (isWalking || drop || moveMode) return;
     setIsWalking(true);
     showNudge('엄마가 산책을 시작했어요 🌿');
 
+    const rect = mainRef.current?.getBoundingClientRect();
     let pos = mascotPos;
     for (const step of WALK_STEPS) {
       setHopping(true);
-      await wait(600);
+      await wait(400);
       addFootprint(pos);
-      pos = { x: pos.x + step.x, y: pos.y + step.y };
+      let next = { x: pos.x + step.x, y: pos.y + step.y };
+      if (rect) next = clampOffsetToMeadow(next, rect);
+      pos = next;
       setMascotPos(pos);
       setHopping(false);
-      await wait(120);
+      await wait(80);
     }
     // 마스코트 몸통과 겹치지 않도록 발밑 옆쪽에 살짝 띄워서 등장
     setDrop({ x: pos.x + 30, y: pos.y + 16 });
     setIsWalking(false);
+  }
+
+  // 부모(gardener)가 정원을 탭했을 때 마스코트를 그 자리로 이동시킨다. hop + 발자국은
+  // triggerWalk와 같은 연출을 쓰되, 최종 목적지는 탭한 좌표 그대로 "정착"한다 — 원위치로
+  // 돌아가지 않는다.
+  async function moveMascotTo(target: Point) {
+    if (isWalking || drop) return;
+    setIsWalking(true);
+    showNudge('엄마를 이 자리로 옮겼어요 🚶');
+
+    const start = mascotPos;
+    const STEPS = 3;
+    let pos = start;
+    for (let i = 0; i < STEPS; i++) {
+      setHopping(true);
+      await wait(400);
+      addFootprint(pos);
+      const t = (i + 1) / STEPS;
+      pos = { x: start.x + (target.x - start.x) * t, y: start.y + (target.y - start.y) * t };
+      setMascotPos(pos);
+      setHopping(false);
+      await wait(80);
+    }
+    setIsWalking(false);
+  }
+
+  function armMoveMode() {
+    if (myRole !== 'gardener' || isWalking) return;
+    setShowPlantTray(false);
+    setArmedPlant(null);
+    setMoveMode(true);
+    showNudge('이동할 자리를 탭해주세요 🚶');
   }
 
   function harvestDrop() {
@@ -228,7 +314,7 @@ export function GardenHome() {
     droplets.addDroplets(1);
     addToast(drop, '💧 +1');
     setDrop(null);
-    setMascotPos({ x: 0, y: 0 });
+    // 위치는 그대로 둔다 — 수확했다고 마스코트가 원위치로 돌아가면 안 된다.
     completeQuest('harvest');
   }
 
@@ -296,15 +382,40 @@ export function GardenHome() {
             <SeedIcon size={15} />
             {seeds}
           </div>
+          {/* 데모용: 물방울/씨앗을 한 번에 100개로 되돌리는 작은 초기화 버튼 */}
+          <button
+            onClick={() => {
+              droplets.reset(100);
+              setSeeds(100);
+              showNudge('자원을 100개로 초기화했어요 🔄');
+            }}
+            className="rounded-full bg-cream-deep/70 px-2 py-1 text-[10px] font-medium text-ink/50"
+            title="물방울·씨앗 100개로 초기화"
+          >
+            🔄
+          </button>
         </div>
 
-        {/* 개발용 데모 모드 토글: 물방울 충전 주기를 8시간 ↔ 8초로 전환 */}
-        <button
-          onClick={() => setDemoMode((v) => !v)}
-          className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
-        >
-          ⚡ 데모모드(물방울 {demoMode ? '8초' : '8시간'}) · {demoMode ? 'ON' : 'OFF'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {/* 개발용 데모 모드 토글: 물방울 충전 주기를 8시간 ↔ 8초로 전환 */}
+          <button
+            onClick={() => setDemoMode((v) => !v)}
+            className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
+          >
+            ⚡ 데모모드(물방울 {demoMode ? '8초' : '8시간'}) · {demoMode ? 'ON' : 'OFF'}
+          </button>
+          {/* 데모용: 실제로는 카카오 로그인 시 역할이 정해지지만, 지금은 로컬에서 부모/자녀
+              화면을 둘 다 시연할 수 있도록 토글로 대신한다. */}
+          <button
+            onClick={() => {
+              setMoveMode(false);
+              setMyRole((r) => (r === 'gardener' ? 'viewer' : 'gardener'));
+            }}
+            className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
+          >
+            👤 내 역할: {myRole === 'gardener' ? '부모' : '자녀'}
+          </button>
+        </div>
 
         {/* TODO: 실서비스는 실제 활동 파이프라인 + 하루 스크러버로 대체(섹션 0, 3). 지금은 데모용 수동 트리거. */}
         {activeTab === 'garden' && (
@@ -332,6 +443,7 @@ export function GardenHome() {
               onClick={() => {
                 setShowPlantTray((v) => !v);
                 setArmedPlant(null);
+                setMoveMode(false);
               }}
               className="rounded-full px-3.5 py-1.5 text-xs font-medium shadow-[0_4px_14px_rgba(120,110,180,0.08)] backdrop-blur-sm"
               style={{
@@ -342,6 +454,10 @@ export function GardenHome() {
               🌷 심기
             </button>
           </div>
+        )}
+
+        {activeTab === 'garden' && myRole === 'gardener' && !moveMode && !armedPlant && (
+          <p className="text-[10px] text-ink/40">마스코트를 탭하면 원하는 자리로 이동시킬 수 있어요</p>
         )}
 
         {activeTab === 'garden' && (
@@ -378,9 +494,10 @@ export function GardenHome() {
           그 오버레이는 main의 자식으로 absolute 배치한다(형제 블록으로 두면 main 높이가
           바뀌면서 나무·마스코트가 붕 뜨는 것처럼 보였음). */}
       <main
+        ref={mainRef}
         className="relative flex-1"
         onClick={handleStageClick}
-        style={{ cursor: armedPlant ? 'copy' : undefined }}
+        style={{ cursor: armedPlant || moveMode ? 'copy' : undefined }}
       >
         {activeTab === 'garden' && (
           <>
@@ -444,9 +561,22 @@ export function GardenHome() {
                     top: HOUSE_FRONT_ANCHOR.top,
                     marginLeft: -55,
                     marginTop: -64,
+                    cursor: myRole === 'gardener' && !isWalking ? 'pointer' : undefined,
                   }}
-                  animate={{ x: mascotPos.x, y: mascotPos.y }}
-                  transition={{ type: 'spring', stiffness: 130, damping: 15 }}
+                  animate={{
+                    x: mascotPos.x,
+                    y: mascotPos.y,
+                    scale: moveMode ? [1, 1.08, 1] : 1,
+                  }}
+                  transition={{
+                    x: { type: 'spring', stiffness: 130, damping: 15 },
+                    y: { type: 'spring', stiffness: 130, damping: 15 },
+                    scale: { duration: 0.6, repeat: moveMode ? Infinity : 0, ease: 'easeInOut' },
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    armMoveMode();
+                  }}
                 >
                   <Mascot
                     size={110}
@@ -618,6 +748,20 @@ export function GardenHome() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* 이동 모드: 심기 모드와 같은 자리(하단 오버레이)에 힌트 + 취소 버튼. */}
+        {activeTab === 'garden' && moveMode && (
+          <div className="absolute inset-x-0 bottom-3 z-20 px-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mx-auto flex max-w-sm flex-col items-center gap-1.5">
+              <p className="rounded-full bg-cream/85 px-4 py-2 text-xs font-medium text-ink/70 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
+                정원을 탭해서 마스코트를 이동시켜주세요
+              </p>
+              <button onClick={() => setMoveMode(false)} className="text-[11px] text-ink/40 underline">
+                취소
+              </button>
+            </div>
           </div>
         )}
       </main>
