@@ -76,7 +76,11 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
     setBusy(true);
     await supabase.auth.signInWithOAuth({
       provider: 'kakao',
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        // account_email은 개인 개발자 카카오 앱에서 기본적으로 막혀있어 요청하지 않음(닉네임만으로 충분).
+        scopes: 'profile_nickname',
+      },
     });
     // 카카오 로그인 페이지로 리다이렉트되므로 이후 로직은 리다이렉트 복귀 후 useEffect가 이어받는다.
   }
