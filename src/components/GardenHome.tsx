@@ -1,7 +1,7 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Mascot } from './Mascot';
-import { CoopTree } from './CoopTree';
+import { Mascot, type GlassesStyle, type HatStyle } from './Mascot';
+import { TreeVisual, TreeGauges, useCoopTree } from './CoopTree';
 import { Customize } from './Customize';
 import { NoteBoard } from './NoteBoard';
 import { deriveMascotShades } from '../lib/color';
@@ -18,50 +18,64 @@ type TabKey = (typeof TABS)[number]['key'];
 
 // bg-day.jpg 기준 창문 좌표 (문 오른쪽 창). 아침/밤/비 변주 이미지도 같은 구도라 좌표 재사용 가능.
 const WINDOW_POSITION = { left: '27.5%', top: '37%' };
-// 마스코트/발자국/아이템이 공유하는 무대 기준점 (main 기준 %)
+// 함께 키우는 나무 = 무대 정중앙, 접지선 기준점
+const TREE_ANCHOR = { left: '50%', top: '80%' };
+const TREE_SIZE = 170;
+// 마스코트/발자국/아이템의 기준점. 나무 옆 동반자 위치로 살짝 offset.
 const STAGE_ANCHOR = { left: '50%', top: '74%' };
+const MASCOT_OFFSET_X = -100;
 
 type Point = { x: number; y: number };
 type Footprint = Point & { id: number };
 type Toast = Point & { id: number; text: string };
 
 // 마스코트는 화면을 가로지르지 않고, 무대 안에서 짧게 2~4번 hop 후 정지한다.
+// 정중앙의 나무와 너무 겹치지 않도록 순이동 폭을 작게 유지.
 const WALK_STEPS: Point[] = [
-  { x: 30, y: -8 },
-  { x: 28, y: -6 },
-  { x: 22, y: -4 },
+  { x: 18, y: -8 },
+  { x: 16, y: -6 },
+  { x: 12, y: -4 },
 ];
 
 type QuestKey = 'sticker' | 'note' | 'harvest';
 const QUEST_DEFS: { key: QuestKey; label: string; icon: string }[] = [
-  { key: 'sticker', label: '엄마 정원에 스티커 붙이기', icon: '🎀' },
+  { key: 'sticker', label: '쪽지에 스티커 붙이기', icon: '🎀' },
   { key: 'note', label: '손글씨 쪽지 보내기', icon: '✏️' },
   { key: 'harvest', label: '오늘 자란 열매 수확하기', icon: '🌰' },
 ];
 const QUEST_REWARD = 2;
 
-type StickerItem = { id: number; emoji: string; xPct: number; yPct: number };
-const STICKER_EMOJIS = ['🌸', '💐', '🦋', '⭐', '💝', '🌈'];
+type Planting = { id: number; emoji: string; xPct: number; yPct: number };
+const PLANT_SHOP = [
+  { emoji: '🌷', label: '튤립', cost: 4 },
+  { emoji: '🌼', label: '데이지', cost: 4 },
+  { emoji: '🍀', label: '클로버', cost: 3 },
+  { emoji: '🌻', label: '해바라기', cost: 7 },
+  { emoji: '🌹', label: '장미', cost: 6 },
+];
 
-type TimeOfDay = 'morning' | 'day' | 'night' | 'rain';
+type TimeOfDay = 'morning' | 'day' | 'night' | 'rain' | 'snow';
 const TIME_OPTIONS: { key: TimeOfDay; icon: string }[] = [
   { key: 'morning', icon: '🌅' },
   { key: 'day', icon: '☀️' },
   { key: 'night', icon: '🌙' },
   { key: 'rain', icon: '🌧️' },
+  { key: 'snow', icon: '❄️' },
 ];
-// TODO: public/bg-{morning,day,night,rain}.jpg 준비되면 교체(섹션 9). 지금은 시간대별 그라디언트 플레이스홀더.
+// 실제 배경 이미지 로드 전/실패 시 폴백으로 쓰이는 시간대별 그라디언트.
 const BG_GRADIENT: Record<TimeOfDay, string> = {
   morning: 'linear-gradient(180deg, #FBD8B0 0%, #F6C9A8 30%, #E9D3B0 55%, #CFE0AE 100%)',
   day: 'linear-gradient(180deg, #CFE3E0 0%, #DCEBD3 38%, #C9DDB4 62%, #AEC998 100%)',
   night: 'linear-gradient(180deg, #232A4D 0%, #2E3768 35%, #3B4372 60%, #46523E 100%)',
   rain: 'linear-gradient(180deg, #B9C2C9 0%, #C3CBCB 35%, #B7C2B0 65%, #9FAE93 100%)',
+  snow: 'linear-gradient(180deg, #E4E9EC 0%, #DCE4E8 35%, #D6DEE2 65%, #C9D3D6 100%)',
 };
 const BG_IMAGE: Record<TimeOfDay, string> = {
   morning: '/bg-morning.jpg',
   day: '/bg-day.jpg',
   night: '/bg-night.jpg',
   rain: '/bg-rain.jpg',
+  snow: '/bg-snow.jpg',
 };
 
 export function GardenHome() {
@@ -69,6 +83,13 @@ export function GardenHome() {
   const [windowLit, setWindowLit] = useState(false);
   const [seeds, setSeeds] = useState(0);
   const [mascotBaseColor, setMascotBaseColor] = useState('#8FAE74');
+
+  const [equippedHat, setEquippedHat] = useState<HatStyle>('none');
+  const [ownedHats, setOwnedHats] = useState<Set<HatStyle>>(() => new Set(['none']));
+  const [equippedGlasses, setEquippedGlasses] = useState<GlassesStyle>('none');
+  const [ownedGlasses, setOwnedGlasses] = useState<Set<GlassesStyle>>(() => new Set(['none']));
+
+  const coop = useCoopTree();
 
   const [isWalking, setIsWalking] = useState(false);
   const [hopping, setHopping] = useState(false);
@@ -85,9 +106,9 @@ export function GardenHome() {
   });
   const [showQuests, setShowQuests] = useState(false);
 
-  const [stickers, setStickers] = useState<StickerItem[]>([]);
-  const [armedSticker, setArmedSticker] = useState<string | null>(null);
-  const [showStickerTray, setShowStickerTray] = useState(false);
+  const [plantings, setPlantings] = useState<Planting[]>([]);
+  const [armedPlant, setArmedPlant] = useState<(typeof PLANT_SHOP)[number] | null>(null);
+  const [showPlantTray, setShowPlantTray] = useState(false);
 
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>('day');
 
@@ -102,14 +123,50 @@ export function GardenHome() {
   }
 
   function handleStageClick(e: ReactMouseEvent<HTMLElement>) {
-    if (!armedSticker) return;
+    if (!armedPlant) return;
+    if (seeds < armedPlant.cost) {
+      showNudge('씨앗이 부족해요 🌰');
+      setArmedPlant(null);
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
-    const xPct = Math.min(84, Math.max(16, ((e.clientX - rect.left) / rect.width) * 100));
-    const yPct = Math.min(88, Math.max(14, ((e.clientY - rect.top) / rect.height) * 100));
-    setStickers((list) => [...list, { id: Date.now() + Math.random(), emoji: armedSticker, xPct, yPct }]);
-    setArmedSticker(null);
-    setShowStickerTray(false);
-    completeQuest('sticker');
+    const xPct = Math.min(90, Math.max(10, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.min(90, Math.max(15, ((e.clientY - rect.top) / rect.height) * 100));
+    setPlantings((list) => [...list, { id: Date.now() + Math.random(), emoji: armedPlant.emoji, xPct, yPct }]);
+    setSeeds((s) => s - armedPlant.cost);
+    showNudge(`${armedPlant.emoji} 심었어요!`);
+    setArmedPlant(null);
+    setShowPlantTray(false);
+  }
+
+  function toggleHat(id: HatStyle, cost: number) {
+    if (ownedHats.has(id)) {
+      setEquippedHat((cur) => (cur === id ? 'none' : id));
+      return;
+    }
+    if (seeds < cost) {
+      showNudge('씨앗이 부족해요 🌰');
+      return;
+    }
+    setSeeds((s) => s - cost);
+    setOwnedHats((prev) => new Set(prev).add(id));
+    setEquippedHat(id);
+    showNudge('모자를 구매했어요 🎉');
+  }
+
+  function toggleGlasses(id: GlassesStyle, cost: number) {
+    if (ownedGlasses.has(id)) {
+      setEquippedGlasses((cur) => (cur === id ? 'none' : id));
+      return;
+    }
+    if (seeds < cost) {
+      showNudge('씨앗이 부족해요 🌰');
+      return;
+    }
+    setSeeds((s) => s - cost);
+    setOwnedGlasses((prev) => new Set(prev).add(id));
+    setEquippedGlasses(id);
+    showNudge('안경을 구매했어요 🎉');
   }
 
   function showNudge(text: string) {
@@ -228,14 +285,17 @@ export function GardenHome() {
               🎯 퀘스트 {questsDoneCount}/{QUEST_DEFS.length}
             </button>
             <button
-              onClick={() => setShowStickerTray((v) => !v)}
+              onClick={() => {
+                setShowPlantTray((v) => !v);
+                setArmedPlant(null);
+              }}
               className="rounded-full px-3.5 py-1.5 text-xs font-medium shadow-[0_4px_14px_rgba(120,110,180,0.08)] backdrop-blur-sm"
               style={{
-                background: showStickerTray ? 'var(--color-soft-purple)' : 'rgba(251,243,230,0.7)',
-                color: showStickerTray ? '#FBF3E6' : undefined,
+                background: showPlantTray ? 'var(--color-soft-purple)' : 'rgba(251,243,230,0.7)',
+                color: showPlantTray ? '#FBF3E6' : undefined,
               }}
             >
-              🎀 스티커
+              🌷 심기
             </button>
           </div>
         )}
@@ -274,31 +334,44 @@ export function GardenHome() {
       <main
         className="relative flex-1"
         onClick={handleStageClick}
-        style={{ cursor: armedSticker ? 'copy' : undefined }}
+        style={{ cursor: armedPlant ? 'copy' : undefined }}
       >
         {activeTab === 'garden' && (
           <>
-            {/* 자유 배치된 스티커 */}
-            {stickers.map((s) => (
+            {/* 씨앗으로 심은 영구 식물 */}
+            {plantings.map((p) => (
               <motion.span
-                key={s.id}
+                key={p.id}
                 className="absolute select-none text-2xl"
-                style={{ left: `${s.xPct}%`, top: `${s.yPct}%`, marginLeft: -14, marginTop: -14 }}
+                style={{ left: `${p.xPct}%`, top: `${p.yPct}%`, marginLeft: -14, marginTop: -14 }}
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={{ type: 'spring', stiffness: 260, damping: 14 }}
               >
-                {s.emoji}
+                {p.emoji}
               </motion.span>
             ))}
 
-            {/* 접지 그림자 + 잔디 무대 */}
+            {/* 함께 키우는 나무 — 무대 정중앙, 씨앗~열매 성장 비주얼 */}
             <div
-              className="absolute h-6 w-40 rounded-[50%]"
+              className="absolute"
+              style={{
+                left: TREE_ANCHOR.left,
+                top: TREE_ANCHOR.top,
+                marginLeft: -(TREE_SIZE / 2),
+                marginTop: -(TREE_SIZE * 1.25 * 0.92),
+              }}
+            >
+              <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={TREE_SIZE} />
+            </div>
+
+            {/* 마스코트 접지 그림자 */}
+            <div
+              className="absolute h-6 w-32 rounded-[50%]"
               style={{
                 left: STAGE_ANCHOR.left,
                 top: STAGE_ANCHOR.top,
-                marginLeft: -80,
+                marginLeft: MASCOT_OFFSET_X - 64,
                 marginTop: 50,
                 background: 'radial-gradient(ellipse, rgba(94,125,82,0.35) 0%, rgba(94,125,82,0) 72%)',
               }}
@@ -307,11 +380,20 @@ export function GardenHome() {
             {/* 마스코트 (짧은 hop 이동) */}
             <motion.div
               className="absolute"
-              style={{ left: STAGE_ANCHOR.left, top: STAGE_ANCHOR.top, marginLeft: -64, marginTop: -74 }}
+              style={{
+                left: STAGE_ANCHOR.left,
+                top: STAGE_ANCHOR.top,
+                marginLeft: MASCOT_OFFSET_X - 55,
+                marginTop: -64,
+              }}
               animate={{ x: mascotPos.x, y: mascotPos.y }}
               transition={{ type: 'spring', stiffness: 130, damping: 15 }}
             >
-              <Mascot size={128} hopping={hopping} config={deriveMascotShades(mascotBaseColor)} />
+              <Mascot
+                size={110}
+                hopping={hopping}
+                config={{ ...deriveMascotShades(mascotBaseColor), hat: equippedHat, glasses: equippedGlasses }}
+              />
             </motion.div>
 
             {/* 지나온 자리의 점선 발자국 (1.5초 페이드) */}
@@ -319,7 +401,12 @@ export function GardenHome() {
               <motion.div
                 key={fp.id}
                 className="absolute flex gap-1.5"
-                style={{ left: STAGE_ANCHOR.left, top: STAGE_ANCHOR.top, marginLeft: fp.x - 10, marginTop: fp.y - 4 }}
+                style={{
+                  left: STAGE_ANCHOR.left,
+                  top: STAGE_ANCHOR.top,
+                  marginLeft: MASCOT_OFFSET_X + fp.x - 10,
+                  marginTop: fp.y - 4,
+                }}
                 initial={{ opacity: 0.5 }}
                 animate={{ opacity: 0 }}
                 transition={{ duration: 1.5, ease: 'easeOut' }}
@@ -333,7 +420,12 @@ export function GardenHome() {
             {drop && (
               <div
                 className="absolute"
-                style={{ left: STAGE_ANCHOR.left, top: STAGE_ANCHOR.top, marginLeft: drop.x - 18, marginTop: drop.y - 18 }}
+                style={{
+                  left: STAGE_ANCHOR.left,
+                  top: STAGE_ANCHOR.top,
+                  marginLeft: MASCOT_OFFSET_X + drop.x - 18,
+                  marginTop: drop.y - 18,
+                }}
               >
                 <motion.button
                   onClick={(e) => {
@@ -354,7 +446,12 @@ export function GardenHome() {
               <motion.div
                 key={t.id}
                 className="absolute text-sm font-semibold text-garden-green"
-                style={{ left: STAGE_ANCHOR.left, top: STAGE_ANCHOR.top, marginLeft: t.x - 14, marginTop: t.y - 18 }}
+                style={{
+                  left: STAGE_ANCHOR.left,
+                  top: STAGE_ANCHOR.top,
+                  marginLeft: MASCOT_OFFSET_X + t.x - 14,
+                  marginTop: t.y - 18,
+                }}
                 initial={{ opacity: 1, y: 0 }}
                 animate={{ opacity: 0, y: -30 }}
                 transition={{ duration: 0.9, ease: 'easeOut' }}
@@ -365,35 +462,64 @@ export function GardenHome() {
           </>
         )}
 
-        {activeTab === 'decorate' && <Customize baseColor={mascotBaseColor} onSelect={setMascotBaseColor} />}
-        {activeTab === 'note' && <NoteBoard onSend={() => completeQuest('note')} />}
+        {activeTab === 'decorate' && (
+          <Customize
+            baseColor={mascotBaseColor}
+            onSelectColor={setMascotBaseColor}
+            seeds={seeds}
+            equippedHat={equippedHat}
+            ownedHats={ownedHats}
+            onToggleHat={toggleHat}
+            equippedGlasses={equippedGlasses}
+            ownedGlasses={ownedGlasses}
+            onToggleGlasses={toggleGlasses}
+          />
+        )}
+        {activeTab === 'note' && (
+          <NoteBoard onSend={() => completeQuest('note')} onStickerPlaced={() => completeQuest('sticker')} />
+        )}
       </main>
 
-      {/* 스티커 트레이 (정원 탭에서 🎀 스티커를 눌렀을 때만) */}
-      {activeTab === 'garden' && showStickerTray && (
+      {/* 식물 상점 (정원 탭에서 🌷 심기를 눌렀을 때만) */}
+      {activeTab === 'garden' && showPlantTray && (
         <div className="relative z-20 px-4 pb-3">
           <div className="mx-auto flex max-w-sm items-center justify-center gap-2.5 rounded-3xl bg-cream/85 px-4 py-3 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
-            {STICKER_EMOJIS.map((emoji) => (
+            {PLANT_SHOP.map((p) => (
               <button
-                key={emoji}
-                onClick={() => setArmedSticker(emoji)}
-                className="flex h-9 w-9 items-center justify-center rounded-full text-xl"
-                style={{ background: armedSticker === emoji ? 'var(--color-soft-purple)' : 'transparent' }}
+                key={p.emoji}
+                onClick={() => setArmedPlant(p)}
+                disabled={seeds < p.cost}
+                className="flex flex-col items-center gap-0.5"
+                style={{
+                  opacity: seeds < p.cost ? 0.4 : 1,
+                }}
               >
-                {emoji}
+                <span
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-xl"
+                  style={{ background: armedPlant?.emoji === p.emoji ? 'var(--color-soft-purple)' : 'transparent' }}
+                >
+                  {p.emoji}
+                </span>
+                <span className="text-[10px] font-semibold text-garden-green">🌰{p.cost}</span>
               </button>
             ))}
           </div>
           <p className="mt-1.5 text-center text-[11px] text-ink/50">
-            {armedSticker ? '정원을 탭해서 붙여주세요' : '붙일 스티커를 골라주세요'}
+            {armedPlant ? '정원을 탭해서 심어주세요' : '씨앗으로 심을 식물을 골라주세요'}
           </p>
         </div>
       )}
 
-      {/* 협동 목표 = 함께 키우는 나무 (정원 탭, 스티커 트레이가 닫혀 있을 때) */}
-      {activeTab === 'garden' && !showStickerTray && (
+      {/* 협동 목표 게이지 (정원 탭, 식물 상점이 닫혀 있을 때) */}
+      {activeTab === 'garden' && !showPlantTray && (
         <div className="relative z-20 px-4 pb-3">
-          <CoopTree />
+          <TreeGauges
+            parentProgress={coop.parentProgress}
+            childProgress={coop.childProgress}
+            stage={coop.stage}
+            onContributeParent={coop.contributeParent}
+            onContributeChild={coop.contributeChild}
+          />
         </div>
       )}
 
