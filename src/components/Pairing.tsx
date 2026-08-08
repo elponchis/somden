@@ -208,7 +208,7 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
 
   return (
     <div className="flex h-svh w-full flex-col items-center justify-center gap-8 overflow-hidden bg-cream px-6 text-center">
-      <AnimatePresence mode="wait">
+      <AnimatePresence>
         {step === 'loading' && (
           <motion.div key="loading" {...fadeSlide}>
             <Mascot size={90} />
