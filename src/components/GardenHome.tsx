@@ -2,7 +2,6 @@ import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Mascot, type GlassesStyle, type HatStyle } from './Mascot';
 import { TreeVisual, TreeGauges, useCoopTree } from './CoopTree';
-import { PondVisual } from './GardenItems';
 import { Customize } from './Customize';
 import { NoteBoard } from './NoteBoard';
 import { CooldownRing, DropletIcon, SeedIcon } from './ResourceIcons';
@@ -89,19 +88,28 @@ const QUEST_DEFS: { key: QuestKey; label: string; icon: string; reward: number }
   { key: 'harvest', label: '오늘 주운 도토리 수확하기', icon: '🌰', reward: 3 },
 ];
 
-// 나무 열매 하나를 수확할 때 얻는 씨앗 — 대충 잡은 값, 나중에 밸런싱.
-const FRUIT_SEED_REWARD = 5;
+// 나무를 한 번에 수확할 때 얻는 씨앗 — 대충 잡은 값, 나중에 밸런싱.
+const TREE_HARVEST_REWARD = 15;
 
-type PlantShopEntry = { id: string; emoji?: string; label: string; cost: number; kind: 'flower' | 'pond' };
+type PlantShopEntry = { id: string; emoji?: string; image?: string; label: string; cost: number; kind: 'flower' | 'pond' };
 const PLANT_SHOP: PlantShopEntry[] = [
-  { id: 'tulip', emoji: '🌷', label: '튤립', cost: 4, kind: 'flower' },
+  { id: 'tulip', image: '/plant-tulip.png', label: '튤립', cost: 4, kind: 'flower' },
   { id: 'daisy', emoji: '🌼', label: '데이지', cost: 4, kind: 'flower' },
-  { id: 'clover', emoji: '🍀', label: '클로버', cost: 3, kind: 'flower' },
-  { id: 'sunflower', emoji: '🌻', label: '해바라기', cost: 7, kind: 'flower' },
-  { id: 'rose', emoji: '🌹', label: '장미', cost: 6, kind: 'flower' },
-  { id: 'pond', label: '연못', cost: 15, kind: 'pond' },
+  { id: 'clover', image: '/plant-clover.png', label: '클로버', cost: 3, kind: 'flower' },
+  { id: 'sunflower', image: '/plant-sunflower.png', label: '해바라기', cost: 7, kind: 'flower' },
+  { id: 'rose', image: '/plant-rose.png', label: '장미', cost: 6, kind: 'flower' },
+  { id: 'hibiscus', image: '/plant-hibiscus.png', label: '무궁화', cost: 8, kind: 'flower' },
+  { id: 'pond', image: '/pond.png', label: '연못', cost: 15, kind: 'pond' },
 ];
-type Planting = { id: number; shopId: string; kind: 'flower' | 'pond'; emoji?: string; xPct: number; yPct: number };
+type Planting = {
+  id: number;
+  shopId: string;
+  kind: 'flower' | 'pond';
+  emoji?: string;
+  image?: string;
+  xPct: number;
+  yPct: number;
+};
 
 type TimeOfDay = 'morning' | 'day' | 'night' | 'rain' | 'snow';
 const TIME_OPTIONS: { key: TimeOfDay; icon: string }[] = [
@@ -193,10 +201,18 @@ export function GardenHome() {
       const yPct = Math.min(90, Math.max(15, ((e.clientY - rect.top) / rect.height) * 100));
       setPlantings((list) => [
         ...list,
-        { id: Date.now() + Math.random(), shopId: armedPlant.id, kind: armedPlant.kind, emoji: armedPlant.emoji, xPct, yPct },
+        {
+          id: Date.now() + Math.random(),
+          shopId: armedPlant.id,
+          kind: armedPlant.kind,
+          emoji: armedPlant.emoji,
+          image: armedPlant.image,
+          xPct,
+          yPct,
+        },
       ]);
       setSeeds((s) => s - armedPlant.cost);
-      showNudge(armedPlant.kind === 'pond' ? '연못을 만들었어요!' : `${armedPlant.emoji} 심었어요!`);
+      showNudge(armedPlant.kind === 'pond' ? '연못을 만들었어요!' : `${armedPlant.label} 심었어요!`);
       setArmedPlant(null);
       setShowPlantTray(false);
       return;
@@ -335,11 +351,11 @@ export function GardenHome() {
     completeQuest('harvest');
   }
 
-  function handleHarvestFruit(index: number) {
-    const got = coop.harvestFruit(index);
+  function handleHarvestTree() {
+    const got = coop.harvest();
     if (!got) return;
-    setSeeds((s) => s + FRUIT_SEED_REWARD);
-    setFruitToast({ id: Date.now() + Math.random(), text: `🌱 +${FRUIT_SEED_REWARD}` });
+    setSeeds((s) => s + TREE_HARVEST_REWARD);
+    setFruitToast({ id: Date.now() + Math.random(), text: `🌱 +${TREE_HARVEST_REWARD}` });
     setTimeout(() => setFruitToast(null), 900);
   }
 
@@ -510,16 +526,29 @@ export function GardenHome() {
             {/* 씨앗으로 심은 영구 식물/아이템 */}
             {plantings.map((p) =>
               p.kind === 'pond' ? (
-                <motion.div
+                <motion.img
                   key={p.id}
-                  className="absolute select-none"
-                  style={{ left: `${p.xPct}%`, top: `${p.yPct}%`, marginLeft: -45, marginTop: -32 }}
+                  src={p.image}
+                  alt="연못"
+                  draggable={false}
+                  className="absolute h-auto w-[110px] select-none"
+                  style={{ left: `${p.xPct}%`, top: `${p.yPct}%`, marginLeft: -55, marginTop: -22 }}
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   transition={{ type: 'spring', stiffness: 220, damping: 16 }}
-                >
-                  <PondVisual size={90} />
-                </motion.div>
+                />
+              ) : p.image ? (
+                <motion.img
+                  key={p.id}
+                  src={p.image}
+                  alt={p.shopId}
+                  draggable={false}
+                  className="absolute h-11 w-auto select-none drop-shadow-[0_3px_4px_rgba(74,58,40,0.25)]"
+                  style={{ left: `${p.xPct}%`, top: `${p.yPct}%`, marginLeft: -18, marginTop: -40 }}
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 260, damping: 14 }}
+                />
               ) : (
                 <motion.span
                   key={p.id}
@@ -544,7 +573,7 @@ export function GardenHome() {
                 marginTop: -(TREE_SIZE * 1.25 * 0.92),
               }}
             >
-              <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={TREE_SIZE} harvestedFruit={coop.harvestedFruit} />
+              <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={TREE_SIZE} />
             </div>
 
             {/* 마스코트 — 아이템을 심는 동안(armedPlant)은 배치에 방해되지 않도록 잠시 숨긴다 */}
@@ -662,13 +691,7 @@ export function GardenHome() {
         {activeTab === 'tree' && (
           <div className="flex h-full flex-col items-center justify-center gap-6 px-6">
             <div className="relative">
-              <TreeVisual
-                stage={coop.stage}
-                justGrew={coop.justGrew}
-                size={220}
-                harvestedFruit={coop.harvestedFruit}
-                onHarvestFruit={handleHarvestFruit}
-              />
+              <TreeVisual stage={coop.stage} justGrew={coop.justGrew} size={220} onHarvest={handleHarvestTree} />
               <AnimatePresence>
                 {fruitToast && (
                   <motion.div
@@ -735,7 +758,7 @@ export function GardenHome() {
                       style={{ opacity: seeds < p.cost ? 0.4 : 1 }}
                     >
                       <span className="flex h-9 w-9 items-center justify-center rounded-full text-xl">
-                        {p.kind === 'pond' ? <PondVisual size={30} /> : p.emoji}
+                        {p.image ? <img src={p.image} alt={p.label} draggable={false} className="h-8 w-8 select-none object-contain" /> : p.emoji}
                       </span>
                       <span className="text-[10px] font-semibold text-garden-green">🌱{p.cost}</span>
                     </button>

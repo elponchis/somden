@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { deriveShades } from '../lib/color';
-import { GroundShadow, PencilFilter } from '../lib/gardenArt';
 
 const MAX = 100;
-const STAGE_LABELS = ['씨앗', '새싹', '줄기', '나무', '열매'];
+// 4단계로 압축: 씨앗 → 새싹 → 나무 → 열매가 풍성한 나무. 마지막 두 단계는 수확↔물주기로 순환한다.
+const STAGE_LABELS = ['씨앗', '새싹', '나무', '열매가 풍성한 나무'];
+const STAGE_IMAGES = ['/tree-seed.png', '/tree-sprout.png', '/tree-full.png', '/tree-fruit.png'];
+const LAST_STAGE = STAGE_LABELS.length - 1;
+const MATURE_STAGE = LAST_STAGE - 1; // '나무' — 열매/수확 순환의 기준 단계
 
 // 물주기(자녀 기여)/부모 활동 재생(부모 기여) 1회당 게이지 증가량. 대충 잡은 값 — 나중에 밸런싱.
 const WATER_GAIN = 25;
@@ -20,16 +22,14 @@ export function useCoopTree() {
   const [childProgress, setChildProgress] = useState(15);
   const [stage, setStage] = useState(0);
   const [justGrew, setJustGrew] = useState(false);
-  const [harvestedFruit, setHarvestedFruit] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
-    if (parentProgress >= MAX && childProgress >= MAX) {
+    if (stage < LAST_STAGE && parentProgress >= MAX && childProgress >= MAX) {
       setJustGrew(true);
       const growTimer = setTimeout(() => {
-        setStage((s) => s + 1);
+        setStage((s) => Math.min(s + 1, LAST_STAGE));
         setParentProgress(0);
         setChildProgress(0);
-        setHarvestedFruit(new Set());
       }, 500);
       const flagTimer = setTimeout(() => setJustGrew(false), 1100);
       return () => {
@@ -37,7 +37,7 @@ export function useCoopTree() {
         clearTimeout(flagTimer);
       };
     }
-  }, [parentProgress, childProgress]);
+  }, [parentProgress, childProgress, stage]);
 
   function water() {
     setChildProgress((c) => Math.min(MAX, c + WATER_GAIN));
@@ -47,150 +47,70 @@ export function useCoopTree() {
     setParentProgress((p) => Math.min(MAX, p + PARENT_REPLAY_GAIN));
   }
 
-  // 이미 수확한 열매면 false, 새로 수확했으면 true를 반환 — 호출부에서 true일 때만 씨앗을 준다.
-  function harvestFruit(index: number) {
-    if (harvestedFruit.has(index)) return false;
-    setHarvestedFruit((prev) => new Set(prev).add(index));
+  // '열매가 풍성한 나무' 단계에서 나무를 탭하면 한 번에 수확하고 '나무' 단계로 되돌아간다.
+  // 이후 다시 물을 주고 채우면 열매가 풍성한 나무로 돌아오는 순환 구조.
+  function harvest() {
+    if (stage !== LAST_STAGE) return false;
+    setStage(MATURE_STAGE);
+    setParentProgress(0);
+    setChildProgress(0);
     return true;
   }
 
-  return { parentProgress, childProgress, stage, justGrew, harvestedFruit, water, replayParent, harvestFruit };
+  return { parentProgress, childProgress, stage, justGrew, water, replayParent, harvest };
 }
 
-// 마스코트 몸통 기본 그라디언트와 동일한 3톤 — "나무를 크게 늘린 마스코트"로 보이게 팔레트를 맞춘다.
-const TREE_HI = '#A8C594';
-const TREE_MID = '#8FB27A';
-const TREE_LO = '#6E9160';
-const TRUNK = deriveShades('#8A6A4A');
-const FRUIT_COLOR = '#C9897B'; // 채도를 낮춘 뮤트 테라코타
-
-const FRUIT_SPOTS: [number, number][] = [
-  [58, 92],
-  [100, 92],
-  [80, 68],
-  [68, 112],
-  [92, 108],
-  [80, 132],
-];
-
-// 캐노피: 원 3개를 겹치는 대신, 손그림처럼 뭉친 유기적 실루엣 하나로.
-const CANOPY_BLOB =
-  'M 82 50 C 104 48 124 62 128 84 C 131 102 122 118 108 128 C 116 136 110 146 92 148 ' +
-  'C 74 150 58 146 46 136 C 32 124 28 106 34 88 C 39 72 50 60 64 54 C 70 51 76 50 82 50 Z';
-
-// 0=씨앗 1=새싹 2=줄기 3=나무 4+=열매. 무대에 크게 그려지는 성장 비주얼.
-// 마스코트와 같은 규칙(gradient 3톤 + 연필 질감 필터 + 접지 그림자)을 따른다.
-// harvestedFruit/onHarvestFruit을 넘기면 열매를 탭해서 개별 수확할 수 있다(안 넘기면 장식용).
+// 손으로 자른 정원 그림 에셋(씨앗/새싹/나무/열매 나무)을 단계별로 보여준다.
+// 열매가 풍성한 나무 단계에서만 탭 가능 — 한 번 탭하면 전체 수확 + '나무' 단계로 정착.
 export function TreeVisual({
   stage,
   justGrew,
   size = 200,
-  harvestedFruit,
-  onHarvestFruit,
+  onHarvest,
 }: {
   stage: number;
   justGrew: boolean;
   size?: number;
-  harvestedFruit?: Set<number>;
-  onHarvestFruit?: (index: number) => void;
+  onHarvest?: () => void;
 }) {
-  const fruitCount = Math.min(Math.max(stage - 3, 0), FRUIT_SPOTS.length);
+  const clampedStage = Math.min(stage, LAST_STAGE);
+  const interactive = clampedStage === LAST_STAGE && Boolean(onHarvest);
 
   return (
-    <motion.svg width={size} height={size * 1.25} viewBox="0 0 160 200">
-      <defs>
-        <radialGradient id="treeCanopy" cx="38%" cy="30%" r="78%">
-          <stop offset="0%" stopColor={TREE_HI} />
-          <stop offset="55%" stopColor={TREE_MID} />
-          <stop offset="100%" stopColor={TREE_LO} />
-        </radialGradient>
-        <linearGradient id="treeTrunk" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor={TRUNK.hi} />
-          <stop offset="55%" stopColor={TRUNK.mid} />
-          <stop offset="100%" stopColor={TRUNK.lo} />
-        </linearGradient>
-        <PencilFilter id="treePencil" />
-      </defs>
-
-      {/* 접지 그림자 — 마스코트와 동일한 색·불투명도 */}
-      <GroundShadow cx={80} cy={184} rx={42} ry={9} opacity={0.28} />
-
-      <g filter="url(#treePencil)">
-        {stage === 0 && (
-          <>
-            <ellipse cx="80" cy="178" rx="11" ry="8" fill={TRUNK.mid} />
-            <ellipse cx="77" cy="175" rx="4" ry="3" fill={TRUNK.hi} opacity="0.7" />
-          </>
-        )}
-
-        {stage === 1 && (
-          <g>
-            <path d="M80 180 C80 168 80 160 80 152" stroke={TRUNK.mid} strokeWidth="4" fill="none" strokeLinecap="round" />
-            <motion.g
-              style={{ transformOrigin: '80px 152px' }}
-              animate={{ scale: justGrew ? [1, 1.3, 1] : 1 }}
-              transition={{ duration: 0.6, ease: 'easeOut' }}
-            >
-              <path d="M80 158 C68 154 61 143 66 132 C79 135 86 148 80 158 Z" fill={TREE_MID} />
-              <path d="M80 164 C92 158 99 146 94 135 C81 138 74 152 80 164 Z" fill={TREE_LO} />
-            </motion.g>
-          </g>
-        )}
-
-        {stage === 2 && (
-          <g>
-            <rect x="76" y="112" width="8" height="68" rx="4" fill="url(#treeTrunk)" />
-            <motion.g
-              style={{ transformOrigin: '80px 145px' }}
-              animate={{ scale: justGrew ? [1, 1.3, 1] : 1 }}
-              transition={{ duration: 0.6, ease: 'easeOut' }}
-            >
-              <path d="M76 168 C64 165 58 156 62 148 C73 150 79 160 76 168 Z" fill={TREE_MID} />
-              <path d="M84 158 C96 155 102 145 98 137 C87 140 81 150 84 158 Z" fill={TREE_LO} />
-              <path d="M76 138 C65 135 60 127 64 120 C74 122 79 131 76 138 Z" fill={TREE_HI} />
-              <path d="M84 128 C95 125 100 116 96 110 C86 112 80 121 84 128 Z" fill={TREE_MID} />
-            </motion.g>
-          </g>
-        )}
-
-        {stage >= 3 && (
-          <g>
-            <rect x="70" y="118" width="20" height="66" rx="7" fill="url(#treeTrunk)" />
-            <motion.g
-              style={{ transformOrigin: '80px 100px' }}
-              animate={{ scale: justGrew ? [1, 1.3, 1] : 1 }}
-              transition={{ duration: 0.6, ease: 'easeOut' }}
-            >
-              <path d={CANOPY_BLOB} fill="url(#treeCanopy)" />
-              {FRUIT_SPOTS.slice(0, fruitCount).map(([fx, fy], i) => {
-                if (harvestedFruit?.has(i)) return null;
-                const interactive = Boolean(onHarvestFruit);
-                return (
-                  <motion.circle
-                    key={i}
-                    cx={fx}
-                    cy={fy}
-                    r="4.2"
-                    fill={FRUIT_COLOR}
-                    style={{ cursor: interactive ? 'pointer' : undefined }}
-                    onClick={
-                      interactive
-                        ? (e) => {
-                            e.stopPropagation();
-                            onHarvestFruit?.(i);
-                          }
-                        : undefined
-                    }
-                    animate={interactive ? { scale: [1, 1.2, 1] } : undefined}
-                    transition={interactive ? { duration: 1.1, repeat: Infinity, ease: 'easeInOut' } : undefined}
-                  />
-                );
-              })}
-            </motion.g>
-          </g>
-        )}
-      </g>
-    </motion.svg>
+    <div className="relative" style={{ width: size, height: size * 1.15 }}>
+      <div
+        className="absolute rounded-[50%]"
+        style={{
+          left: '50%',
+          bottom: '4%',
+          width: size * 0.62,
+          height: size * 0.14,
+          transform: 'translateX(-50%)',
+          background: 'radial-gradient(ellipse, rgba(74,58,40,0.28) 0%, rgba(74,58,40,0) 72%)',
+        }}
+      />
+      <motion.img
+        key={clampedStage}
+        src={STAGE_IMAGES[clampedStage]}
+        alt={STAGE_LABELS[clampedStage]}
+        className="absolute inset-0 h-full w-full select-none object-contain"
+        style={{ cursor: interactive ? 'pointer' : undefined }}
+        draggable={false}
+        onClick={interactive ? onHarvest : undefined}
+        initial={{ opacity: 0, scale: 0.85 }}
+        animate={{ opacity: 1, scale: justGrew ? [1, 1.16, 1] : 1 }}
+        transition={{ duration: 0.6, ease: 'easeOut' }}
+      />
+      {interactive && (
+        <motion.p
+          className="absolute -top-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-purple-ink px-2.5 py-1 text-[10px] font-medium text-cream shadow-[0_4px_12px_rgba(120,110,180,0.18)]"
+          animate={{ y: [0, -4, 0] }}
+          transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+        >
+          탭해서 수확하기 🌰
+        </motion.p>
+      )}
+    </div>
   );
 }
 
@@ -239,7 +159,7 @@ export function TreeGauges({
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-3 rounded-3xl bg-cream/85 px-4 py-3 shadow-[0_6px_20px_rgba(120,110,180,0.10)] backdrop-blur-sm">
       <span className="text-xs font-semibold text-ink">
-        함께 키우는 나무 · {treeStageLabel(stage)} ({stage + 1}단계)
+        함께 키우는 나무 · {treeStageLabel(stage)} ({Math.min(stage + 1, STAGE_LABELS.length)}단계)
       </span>
       <div className="space-y-1.5">
         <GaugeBar emoji="🌿" label="엄마" color="bg-garden-green" value={parentProgress} />
