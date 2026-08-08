@@ -7,6 +7,7 @@ import { NoteBoard } from './NoteBoard';
 import { CooldownRing, DropletIcon, SeedIcon } from './ResourceIcons';
 import { deriveMascotShades } from '../lib/color';
 import { DEMO_COOLDOWN_MS, DROPLET_CAP, REAL_COOLDOWN_MS, formatCooldown, useDroplets } from '../hooks/useDroplets';
+import { supabase } from '../lib/supabase';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -436,6 +437,15 @@ export function GardenHome() {
             className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
           >
             ⚡ 데모모드(물방울 {demoMode ? '8초' : '8시간'}) · {demoMode ? 'ON' : 'OFF'}
+          </button>
+          {/* 데모/발표용: 로그인 세션이 localStorage에 남아 새로고침해도 로그인 화면을 다시
+              안 보여주므로, 필요할 때 세션을 지우고 로그인 화면부터 다시 보여주기 위한 버튼. */}
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className="rounded-full bg-cream/60 px-3 py-1 text-[10px] font-medium text-ink/60 backdrop-blur-sm"
+            title="로그인 세션을 지우고 처음(로그인) 화면으로 돌아갑니다"
+          >
+            🚪 로그아웃
           </button>
         </div>
 
