@@ -229,12 +229,10 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
             >
               💬 카카오로 시작하기
             </button>
-            {/* 개발용: npm run dev(로컬)에서만 보이고 프로덕션 빌드에는 포함되지 않음 */}
-            {import.meta.env.DEV && (
-              <button onClick={onPaired} className="text-xs text-ink/30 underline">
-                🔧 개발용: 로그인 건너뛰고 정원 보기
-              </button>
-            )}
+            {/* 데모/발표용: 카카오 로그인 없이 바로 정원을 보여주는 버튼 — 빌드 모드와 무관하게 항상 노출 */}
+            <button onClick={onPaired} className="text-xs text-ink/30 underline">
+              🔧 로그인 건너뛰고 정원 보기
+            </button>
           </motion.div>
         )}
 
