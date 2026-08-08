@@ -363,6 +363,18 @@ export function Pairing({ session, onPaired }: { session: Session | null; onPair
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 세션이 있으면 role/method/create/enter 등 이후 단계로 자동 진입해서 로그인 화면 자체가
+          다시 안 보일 수 있다. 데모 중 언제든 처음(로그인) 화면으로 빠져나올 수 있도록 어느
+          단계에서든 누를 수 있는 로그아웃 버튼을 고정으로 둔다. */}
+      {session && step !== 'loading' && (
+        <button
+          onClick={() => supabase.auth.signOut()}
+          className="fixed right-4 top-4 text-xs text-ink/30 underline"
+        >
+          🚪 로그아웃
+        </button>
+      )}
     </div>
   );
 }
