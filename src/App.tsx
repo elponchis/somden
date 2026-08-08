@@ -12,7 +12,16 @@ function App() {
   const [authState, setAuthState] = useState<AuthState>('checking');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    // 카카오 로그인 리다이렉트로 돌아온 경우(URL에 access_token/code가 붙어있음)가 아니라면,
+    // 그냥 URL을 치고 들어온 "일반 방문"으로 보고 세션을 지운다. 데모/발표 중 이전에 로그인한
+    // 세션이 남아있어서 로그인 화면(및 로그인 건너뛰기 버튼)을 건너뛰고 아무 데나 랜딩해버리는
+    // 문제를 막기 위함 — 매번 URL만 치면 항상 로그인 화면부터 보이도록 보장한다.
+    const isOAuthCallback = window.location.hash.includes('access_token') || new URLSearchParams(window.location.search).has('code');
+    if (!isOAuthCallback) {
+      supabase.auth.signOut().finally(() => setSession(null));
+    } else {
+      supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    }
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => setSession(newSession));
